@@ -5,9 +5,15 @@ from __future__ import annotations
 import argparse
 import ctypes
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
+
+try:
+	import tkinter as tk
+except ImportError:
+	tk = None
 
 
 RETURN_KEY_CODE = 36
@@ -54,6 +60,16 @@ def parse_args() -> argparse.Namespace:
 			"Paste journal text into stdin, switch to your target app during the "
 			"countdown, and let the script retype it as keyboard input."
 		)
+	)
+	parser.add_argument(
+		"--text-file",
+		type=Path,
+		help="Read journal text from a file instead of stdin.",
+	)
+	parser.add_argument(
+		"--gui",
+		action="store_true",
+		help="Open a small paste window instead of reading journal text from stdin.",
 	)
 	parser.add_argument(
 		"--countdown",
@@ -214,6 +230,84 @@ def normalize_input_text(text: str) -> str:
 	return "".join(filtered_characters)
 
 
+def read_text_file(path: Path) -> str:
+	try:
+		return normalize_input_text(path.read_text(encoding="utf-8"))
+	except FileNotFoundError:
+		print(f"Text file not found: {path}", file=sys.stderr)
+		raise SystemExit(1) from None
+	except OSError as exc:
+		print(f"Unable to read text file {path}: {exc}", file=sys.stderr)
+		raise SystemExit(1) from None
+
+
+def read_gui_text() -> str:
+	if tk is None:
+		print(
+			"The GUI mode requires tkinter, but it is not available in this Python installation.",
+			file=sys.stderr,
+		)
+		raise SystemExit(1) from None
+
+	state = {"submitted": False, "text": ""}
+	root = tk.Tk()
+	root.title("Journal Automation")
+	root.geometry("760x520")
+	root.minsize(520, 360)
+
+	instructions = tk.Label(
+		root,
+		text="Paste your journal text below, then click Start Typing.",
+		anchor="w",
+		justify="left",
+		padx=14,
+		pady=12,
+	)
+	instructions.pack(fill="x")
+
+	text_widget = tk.Text(root, wrap="word", undo=True)
+	text_widget.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+	text_widget.focus_set()
+
+	button_frame = tk.Frame(root)
+	button_frame.pack(fill="x", padx=14, pady=(0, 14))
+
+	def submit() -> None:
+		state["submitted"] = True
+		state["text"] = normalize_input_text(text_widget.get("1.0", "end-1c"))
+		root.destroy()
+
+	def cancel() -> None:
+		root.destroy()
+
+	start_button = tk.Button(button_frame, text="Start Typing", command=submit)
+	start_button.pack(side="right")
+
+	cancel_button = tk.Button(button_frame, text="Cancel", command=cancel)
+	cancel_button.pack(side="right", padx=(0, 8))
+
+	root.bind("<Command-Return>", lambda _event: submit())
+	root.bind("<Control-Return>", lambda _event: submit())
+	root.protocol("WM_DELETE_WINDOW", cancel)
+	root.mainloop()
+
+	if not state["submitted"]:
+		print("Cancelled.", file=sys.stderr)
+		raise SystemExit(130) from None
+	return state["text"]
+
+
+def get_input_text(args: argparse.Namespace) -> str:
+	if args.text_file is not None and args.gui:
+		print("Use either --text-file or --gui, not both.", file=sys.stderr)
+		raise SystemExit(2) from None
+	if args.text_file is not None:
+		return read_text_file(args.text_file)
+	if args.gui:
+		return read_gui_text()
+	return read_stdin_text()
+
+
 def type_text(text: str, chunk_size: int, event_delay: float) -> tuple[int, str | None]:
 	if IS_MACOS:
 		commands = build_typing_commands(text, chunk_size=chunk_size, event_delay=event_delay)
@@ -279,10 +373,15 @@ def main() -> int:
 		print("--countdown cannot be negative.", file=sys.stderr)
 		return 2
 
-	text = read_stdin_text()
+	text = get_input_text(args)
 	if not text:
-		eof_hint = "Ctrl-Z then Enter" if IS_WINDOWS else "Ctrl-D"
-		print(f"No text received. Paste text into stdin before pressing {eof_hint}.", file=sys.stderr)
+		if args.text_file is not None:
+			print("No text received from --text-file.", file=sys.stderr)
+		elif args.gui:
+			print("No text received from the GUI window.", file=sys.stderr)
+		else:
+			eof_hint = "Ctrl-Z then Enter" if IS_WINDOWS else "Ctrl-D"
+			print(f"No text received. Paste text into stdin before pressing {eof_hint}.", file=sys.stderr)
 		return 1
 
 	printable_length = len(text.replace("\r", ""))
