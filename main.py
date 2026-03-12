@@ -131,7 +131,7 @@ def windows_send_unicode_character(character: str) -> None:
 
 
 def windows_type_text(text: str, event_delay: float) -> None:
-	normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+	normalized_text = normalize_input_text(text)
 	for character in normalized_text:
 		if character == "\n":
 			windows_send_virtual_key(VK_RETURN)
@@ -196,10 +196,22 @@ def read_stdin_text() -> str:
 	eof_hint = "Ctrl-Z then Enter" if IS_WINDOWS else "Ctrl-D"
 	print(f"Paste your journal text below. Press {eof_hint} when finished.\n", file=sys.stderr)
 	try:
-		return sys.stdin.read()
+		return normalize_input_text(sys.stdin.read())
 	except KeyboardInterrupt:
 		print("\nCancelled.", file=sys.stderr)
 		raise SystemExit(130) from None
+
+
+def normalize_input_text(text: str) -> str:
+	normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+	if IS_WINDOWS:
+		normalized_text = normalized_text.replace("\x1a", "")
+
+	filtered_characters: list[str] = []
+	for character in normalized_text:
+		if character in {"\n", "\t"} or ord(character) >= 32:
+			filtered_characters.append(character)
+	return "".join(filtered_characters)
 
 
 def type_text(text: str, chunk_size: int, event_delay: float) -> tuple[int, str | None]:
@@ -212,7 +224,7 @@ def type_text(text: str, chunk_size: int, event_delay: float) -> tuple[int, str 
 		return len(commands) - 2, None
 
 	if IS_WINDOWS:
-		normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+		normalized_text = normalize_input_text(text)
 		event_count = len(normalized_text)
 		try:
 			windows_type_text(text, event_delay=event_delay)
@@ -269,14 +281,15 @@ def main() -> int:
 
 	text = read_stdin_text()
 	if not text:
-		print("No text received. Paste text into stdin before pressing Ctrl-D.", file=sys.stderr)
+		eof_hint = "Ctrl-Z then Enter" if IS_WINDOWS else "Ctrl-D"
+		print(f"No text received. Paste text into stdin before pressing {eof_hint}.", file=sys.stderr)
 		return 1
 
 	printable_length = len(text.replace("\r", ""))
 	if IS_MACOS:
 		event_count = len(build_typing_commands(text, chunk_size=args.chunk_size, event_delay=args.event_delay)) - 2
 	elif IS_WINDOWS:
-		event_count = len(text.replace("\r\n", "\n").replace("\r", "\n"))
+		event_count = len(normalize_input_text(text))
 	else:
 		print(f"Unsupported platform: {sys.platform}. This script currently supports macOS and Windows.", file=sys.stderr)
 		return 1
