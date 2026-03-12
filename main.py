@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from ctypes import wintypes
 
 try:
 	import tkinter as tk
@@ -30,28 +31,57 @@ IS_WINDOWS = os.name == "nt"
 
 
 if IS_WINDOWS:
-	ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+	ULONG_PTR = wintypes.WPARAM
 
 
-	class KEYBDINPUT(ctypes.Structure):
+	class MOUSEINPUT(ctypes.Structure):
 		_fields_ = [
-			("wVk", ctypes.c_ushort),
-			("wScan", ctypes.c_ushort),
-			("dwFlags", ctypes.c_ulong),
-			("time", ctypes.c_ulong),
+			("dx", wintypes.LONG),
+			("dy", wintypes.LONG),
+			("mouseData", wintypes.DWORD),
+			("dwFlags", wintypes.DWORD),
+			("time", wintypes.DWORD),
 			("dwExtraInfo", ULONG_PTR),
 		]
 
 
+	class KEYBDINPUT(ctypes.Structure):
+		_fields_ = [
+			("wVk", wintypes.WORD),
+			("wScan", wintypes.WORD),
+			("dwFlags", wintypes.DWORD),
+			("time", wintypes.DWORD),
+			("dwExtraInfo", ULONG_PTR),
+		]
+
+
+	class HARDWAREINPUT(ctypes.Structure):
+		_fields_ = [
+			("uMsg", wintypes.DWORD),
+			("wParamL", wintypes.WORD),
+			("wParamH", wintypes.WORD),
+		]
+
+
 	class _INPUTUNION(ctypes.Union):
-		_fields_ = [("ki", KEYBDINPUT)]
+		_fields_ = [
+			("mi", MOUSEINPUT),
+			("ki", KEYBDINPUT),
+			("hi", HARDWAREINPUT),
+		]
 
 
 	class INPUT(ctypes.Structure):
 		_fields_ = [
-			("type", ctypes.c_ulong),
+			("type", wintypes.DWORD),
 			("union", _INPUTUNION),
 		]
+
+
+	USER32 = ctypes.WinDLL("user32", use_last_error=True)
+	SEND_INPUT = USER32.SendInput
+	SEND_INPUT.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
+	SEND_INPUT.restype = wintypes.UINT
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,7 +136,7 @@ def run_osascript(lines: list[str]) -> subprocess.CompletedProcess[str]:
 
 def windows_send_input(*inputs: INPUT) -> int:
 	input_array = (INPUT * len(inputs))(*inputs)
-	return ctypes.windll.user32.SendInput(len(inputs), input_array, ctypes.sizeof(INPUT))
+	return SEND_INPUT(len(inputs), input_array, ctypes.sizeof(INPUT))
 
 
 def windows_key_input(*, virtual_key: int = 0, scan_code: int = 0, flags: int = 0) -> INPUT:
@@ -130,7 +160,17 @@ def windows_send_virtual_key(virtual_key: int) -> None:
 		windows_key_input(virtual_key=virtual_key, flags=KEYEVENTF_KEYUP),
 	)
 	if sent != 2:
-		raise OSError("SendInput failed for virtual key event.")
+		raise_windows_send_input_error("virtual key event")
+
+
+def raise_windows_send_input_error(event_name: str) -> None:
+	error_code = ctypes.get_last_error()
+	if error_code:
+		raise OSError(error_code, f"SendInput failed for {event_name}.")
+	raise OSError(
+		f"SendInput failed for {event_name}. Windows may be blocking synthetic input to the target app. "
+		"Try focusing the target window or running the script with the same privilege level as the target app."
+	)
 
 
 def windows_send_unicode_character(character: str) -> None:
@@ -143,7 +183,7 @@ def windows_send_unicode_character(character: str) -> None:
 		windows_key_input(scan_code=code_point, flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
 	)
 	if sent != 2:
-		raise OSError("SendInput failed for Unicode character event.")
+		raise_windows_send_input_error("Unicode character event")
 
 
 def windows_type_text(text: str, event_delay: float) -> None:
