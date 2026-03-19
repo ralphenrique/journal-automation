@@ -94,6 +94,38 @@ Example:
 python3 main.py --gui --countdown 8 --event-delay 0.05
 ```
 
+## Standalone binaries (PyInstaller)
+
+If you want a single executable that does not rely on a pre-installed Python interpreter, build with PyInstaller on each target platform (PyInstaller cannot cross-compile).
+
+1. Install PyInstaller in any virtual environment or user site:
+
+	```bash
+	python3 -m pip install --upgrade pyinstaller
+	```
+
+	```powershell
+	py -m pip install --upgrade pyinstaller
+	```
+
+2. From the repository root, run:
+
+	```bash
+	pyinstaller --clean --noconfirm packaging/journal-automation.spec
+	```
+
+	```powershell
+	pyinstaller --clean --noconfirm packaging/journal-automation.spec
+	```
+
+3. Grab the bundled app from `dist/journal-automation/`:
+	- macOS: `dist/journal-automation/journal-automation` (CLI binary). Codesign or notarize it if Gatekeeper blocks the first run.
+	- Windows: `dist/journal-automation/journal-automation.exe` (console app).
+
+4. Distribute the binary for that platform. Users can run the executable directly (e.g., `./journal-automation --gui` on macOS or `journal-automation.exe --gui` on Windows).
+
+Each platform build embeds Python plus `tkinter`, so the countdown/GUI prompts still appear in a terminal window.
+
 ## Windows notes
 
 Windows normally does not require a separate keyboard permission screen.
@@ -115,17 +147,3 @@ py journal-automation.py
 If typing fails immediately on macOS, the usual cause is missing Accessibility permission for the host app running Python.
 
 Grant access to Terminal, iTerm, VS Code, or whichever app is launching the script.
-
-## GitHub raw URL pattern
-
-If you publish updates, the direct raw file URL format is:
-
-```text
-https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>
-```
-
-For this repository:
-
-```text
-https://raw.githubusercontent.com/ralphenrique/journal-automation/main/main.py
-```
